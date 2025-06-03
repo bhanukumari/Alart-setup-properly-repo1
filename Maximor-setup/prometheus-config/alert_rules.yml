@@ -1,0 +1,21 @@
+groups:
+  - name: system-alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100) > 12
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU usage high on {{ $labels.instance }}"
+          description: "CPU usage is above 12% for more than 2 minutes."
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 < 20
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low available memory on {{ $labels.instance }}"
+          description: "Available memory is below 20% for more than 2 minutes."
+

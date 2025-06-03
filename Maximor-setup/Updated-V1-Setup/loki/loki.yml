@@ -1,0 +1,79 @@
+auth_enabled: false
+
+server:
+  grpc_listen_port: 9095
+  http_listen_port: 3100
+  http_server_read_timeout: 600s
+  http_server_write_timeout: 600s
+
+schema_config:
+  configs:
+    - from: "2024-04-01"
+      index:
+        period: 24h
+        prefix: loki_index_
+      object_store: filesystem
+      schema: v13
+      store: tsdb
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/cache
+  filesystem:
+    directory: /loki/chunks
+
+limits_config:
+  max_query_parallelism: 30
+  max_cache_freshness_per_query: 10m
+  query_timeout: 300s
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  retention_period: 168h
+  split_queries_by_interval: 15m
+  volume_enabled: true
+  max_query_series: 100000
+
+common:
+  compactor_address: http://loki:3100
+  path_prefix: /loki
+  replication_factor: 1
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  instance_addr: 0.0.0.0
+  ring:
+    kvstore:
+      store: inmemory
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+  max_retries: 5
+  align_queries_with_step: true
+  parallelise_shardable_queries: true
+
+ingester_client:
+  grpc_client_config:
+    max_recv_msg_size: 52428800
+    max_send_msg_size: 52428800
+
+frontend:
+  max_body_size: 52428800
+
+compactor:
+  compaction_interval: 10m
+  delete_request_store: filesystem
+  retention_delete_delay: 2h
+  retention_enabled: true
+  working_directory: /loki/compactor
+
+tracing:
+  enabled: true
+
+ruler:
+  alertmanager_url: http://alertmanager:9093

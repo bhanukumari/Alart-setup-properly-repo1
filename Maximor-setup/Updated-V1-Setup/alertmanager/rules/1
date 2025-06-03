@@ -1,0 +1,11 @@
+groups:
+  - name: bp-app-alerts
+    rules:
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="bp"} > (0.15 * 1024 * 1024 * 1024)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: High memory usage detected for bp
+          description: "{{ $labels.instance }} is using too much memory."

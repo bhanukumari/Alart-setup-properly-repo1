@@ -1,0 +1,180 @@
+connectors:
+  spanmetrics:
+    dimensions:
+      - name: http.method
+      - name: http.status_code
+      - default: /
+        name: http.route
+    dimensions_cache_size: 1000
+    events:
+      dimensions:
+        - name: exception.type
+        - name: exception.message
+      enabled: true
+    exemplars:
+      enabled: true
+    metrics_expiration: 5m
+    metrics_flush_interval: 15s
+
+exporters:
+  debug: {}
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  prometheusremotewrite:
+    endpoint: http://victoriametrics:8428/api/v1/write
+    export_created_metric:
+      enabled: true
+    max_batch_size_bytes: 8192
+    remote_write_queue:
+      enabled: true
+      num_consumers: 100
+      queue_size: 100000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 300s
+      max_interval: 30s
+    timeout: 300s
+    tls:
+      insecure_skip_verify: true
+
+processors:
+  batch:
+    send_batch_max_size: 8192
+    send_batch_size: 1024
+    timeout: 60s
+  memory_limiter:
+    check_interval: 10s
+    limit_percentage: 75
+    spike_limit_percentage: 50
+  attributes/agent:
+    actions:
+      - key: service.namespace
+        action: upsert
+        value: agent
+      - key: service.name
+        action: upsert
+        value: otel-collector
+  resourcedetection/system:
+    detectors: ["system"]
+    system:
+      hostname_sources: ["os"]
+  resourcedetection/docker:
+    detectors: ["docker"]
+    timeout: 2s
+    override: true
+  transform:
+    metric_statements:
+      - context: datapoint
+        statements:
+          - set(attributes["host.name"], resource.attributes["host.name"])
+          - set(attributes["process.command"], resource.attributes["process.command"])
+          - set(attributes["process.command_line"], resource.attributes["process.command_line"])
+          - set(attributes["process.executable.name"], resource.attributes["process.executable.name"])
+          - set(attributes["process.executable.path"], resource.attributes["process.executable.path"])
+          - set(attributes["process.owner"], resource.attributes["process.owner"])
+          - set(attributes["process.parent_pid"], resource.attributes["process.parent_pid"])
+          - set(attributes["process.pid"], resource.attributes["process.pid"])
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        keepalive:
+          server_parameters:
+            max_connection_age: 5m
+            max_connection_age_grace: 5m
+            max_connection_idle: 1m
+            time: 3m
+            timeout: 5m
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 10s
+    root_path: /hostfs  # Mount the host filesystem inside the container
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+          system.cpu.physical.count:
+            enabled: true
+          system.cpu.time:
+            enabled: true
+          system.cpu.logical.count:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+          system.linux.memory.available:
+            enabled: true
+          system.memory.limit:
+            enabled: true
+      disk: {}
+      system: 
+        metrics:
+          system.uptime:
+            enabled: true
+      load:
+        metrics:
+          system.cpu.load_average.1m:
+            enabled: true
+      filesystem: 
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+          system.filesystem.inodes.usage:
+            enabled: true
+      network:
+        metrics:
+          system.network.io:
+            enabled: true
+      paging:
+        metrics:
+          system.paging.faults:
+            enabled: true
+          system.paging.operations:
+            enabled: true
+          system.paging.usage:
+            enabled: true
+          system.paging.utilization:
+            enabled: true
+#      process: {}
+
+service:
+  pipelines:
+    metrics:
+      receivers:
+        - spanmetrics
+        - otlp
+        - hostmetrics  # added hostmetrics receiver
+      processors:
+        - memory_limiter
+        - attributes/agent
+        - resourcedetection/system
+        - resourcedetection/docker
+        - transform
+        - batch
+      exporters:
+        - debug
+        - prometheusremotewrite
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - batch
+        # - tail_sampling
+      exporters:
+        - debug
+        - otlp
+        - spanmetrics
+
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+      level: detailed

@@ -1,0 +1,229 @@
+services:
+  vmagent:
+    container_name: vmagent
+    image: victoriametrics/vmagent:v1.111.0
+    depends_on:
+      - "victoriametrics"
+    ports:
+      - 8429:8429
+    volumes:
+      - vmagentdata:/vmagentdata
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--promscrape.config=/etc/prometheus/prometheus.yml"
+      - "--remoteWrite.url=http://victoriametrics:8428/api/v1/write"
+    networks:
+      - o11y-net
+    restart: always
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.111.0
+    container_name: victoriametrics
+    restart: unless-stopped
+    ports:
+      - 8428:8428
+    volumes:
+      - victoriametrics-storage:/victoria-metrics-data
+      - ./config/victoriametrics.yml:/etc/victoria-metrics/victoriametrics.yml
+    networks:
+      - o11y-net
+    command:
+      - '-storageDataPath=/victoria-metrics-data'
+      - '-httpListenAddr=:8428'
+      - '-retentionPeriod=30d'
+      - "--vmalert.proxyURL=http://vmalert:8880"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: always
+    user: "0:0"
+    ports:
+      - "3000:3000"
+    volumes:
+      - /data/grafana-storage:/var/lib/grafana
+      - ./grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - o11y-net
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_LIVE_ENABLED=false
+
+    # SMTP Configurations:
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=smtp.gmail.com:587
+      - GF_SMTP_USER=kumaribhanujha8699@gmail.com
+      - GF_SMTP_PASSWORD=01901330139009s
+      - GF_SMTP_FROM_ADDRESS=kumaribhanujha8699@gmail.com
+      - GF_SMTP_FROM_NAME=Grafana Alerts
+    depends_on:
+      - victoriametrics
+
+  vmalert:
+    container_name: vmalert
+    image: victoriametrics/vmalert:v1.111.0
+    depends_on:
+      - "victoriametrics"
+      - "alertmanager"
+    ports:
+      - 8880:8880
+    volumes:
+      - ./alertmanager/rules/alerts.yml:/etc/alerts/alerts.yml
+      - ./alertmanager/rules/alerts-health.yml:/etc/alerts/alerts-health.yml
+      - ./alertmanager/rules/alerts-vmagent.yml:/etc/alerts/alerts-vmagent.yml
+      - ./alertmanager/rules/alerts-vmalert.yml:/etc/alerts/alerts-vmalert.yml
+      - ./alertmanager/rules/alerts-cpu/:/etc/alerts/alerts-cpu/:rw 
+      - ./alertmanager/rules/alerts-bp.yml:/etc/alerts/alerts-bp.yml
+
+
+    command:
+      - "--datasource.url=http://victoriametrics:8428/"
+      - "--remoteRead.url=http://victoriametrics:8428/"
+      - "--remoteWrite.url=http://vmagent:8429/"
+      - "--notifier.url=http://alertmanager:9093/"
+     # - "--rule=/etc/alerts/*.yml"
+      - "--rule=/etc/alerts/alerts.yml"
+      - "--rule=/etc/alerts/alerts-bp.yml"
+      - "--external.url=http://192.168.10.219:3000"
+      - '--external.alert.source=explore?orgId=1&left={"datasource":"VictoriaMetrics","queries":[{"expr":{{.Expr|jsonEscape|queryEscape}},"refId":"A"}],"range":{"from":"{{ .ActiveAt.UnixMilli }}","to":"now"}}'
+    networks:
+      - o11y-net
+    restart: always
+
+  alertmanager:
+    container_name: alertmanager
+    image: prom/alertmanager:v0.28.0
+    volumes:
+      #    - ./alertmanager/alertmanager.yml:/config/alertmanager.yml
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/config.yml
+      - ./alertmanager/templates:/config/templates
+    command:
+  #    - "--config.file=/config/alertmanager.yml"
+      - "--config.file=/etc/alertmanager/config.yml" 
+    ports:
+      - 9093:9093
+    networks:
+      - o11y-net
+    restart: always
+
+  loki:
+    image: grafana/loki:3.4.0
+    container_name: loki
+    restart: always
+    ports:
+      - "3100:3100"
+    volumes:
+      - /data/loki-storage:/loki
+      - ./loki/loki.yml:/etc/loki/local-config.yml
+    networks:
+      - o11y-net
+    command:
+      - "-config.file=/etc/loki/local-config.yml"
+
+  tempo:
+    image: grafana/tempo:2.7.0
+    user: "1000:1000"
+    container_name: tempo
+    restart: always
+    ports:
+      - "43171:4317"
+      - "43181:4318"
+      - "3200:3200"
+    volumes:
+      - ./tempo/tempo-overrides.yml:/conf/overrides.yaml
+      - ./tempo/tempo.yml:/etc/tempo.yml
+      - /data/tempo-storage:/tempo-data
+    networks:
+      - o11y-net
+    command:
+      - '-config.file=/etc/tempo.yml'
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    user: "0:0"
+    container_name: otel-collector
+    restart: always
+    ports:
+      - "4317:4317"
+      - "8888:8888"
+      - "4318:4318"
+      - "4320:4320"
+      - "55681:55681"
+    volumes:
+      - ./tempo/otel.yml:/etc/otel.yaml
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      - o11y-net
+    command:
+      - "--config=/etc/otel.yaml"
+
+  #  Added Node Exporter here
+  nodeexporter:
+    image: prom/node-exporter:latest
+    container_name: nodeexporter
+    restart: always
+    ports:
+      - "9100:9100"
+    volumes:
+      - "/:/host:ro,rslave"
+    command:
+      - '--path.rootfs=/host'
+    networks:
+      - o11y-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    user: "65534:65534"
+    restart: always
+    volumes:
+      - ./prometheus-config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-config/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - /data/prometheus:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    networks:
+      - o11y-net
+
+volumes:
+  grafana-storage:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/grafana-storage
+      o: bind
+  victoriametrics-storage:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/victoriametrics-storage
+      o: bind
+  vmagentdata:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/vmagentdata
+      o: bind
+  loki-storage:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/loki-storage
+      o: bind
+  tempo-storage:
+    driver: local
+    driver_opts:
+      type: none
+      device: /data/tempo-storage
+      o: bind
+
+networks:
+  o11y-net:
+    driver: bridge
+
